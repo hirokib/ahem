@@ -437,3 +437,18 @@ assert plug.codex_pids() == [("111", "ttys3")], plug.codex_pids()
 shutil.rmtree(roll)
 print("ok: all checks passed")
 EOF
+
+# --- bundle smoke check (only when a build exists; build.sh makes one) ---
+APP=$REPO/build/ahem.app
+if [ -d "$APP" ]; then
+  for f in Contents/MacOS/ahem Contents/Resources/plugin/ahem.3s.sh \
+           Contents/Resources/bin/ahem Contents/Resources/hook/status.py \
+           Contents/Resources/codex-hooks.json; do
+    [ -e "$APP/$f" ] || { echo "bundle missing $f" >&2; exit 1 }
+  done
+  codesign -v "$APP" || { echo "bundle signature invalid" >&2; exit 1 }
+  # the bundled plugin must run from inside Resources (sibling lookups intact)
+  out=$("$APP/Contents/Resources/plugin/ahem.3s.sh")
+  case "$out" in (*---*) ;; (*) echo "bundled plugin broke: $out" >&2; exit 1 ;; esac
+  echo "ok: bundle smoke check passed"
+fi

@@ -35,10 +35,21 @@ Run five Claude Code sessions across five projects and the question is never "ar
 
 ## Install
 
+### Homebrew
+
+```sh
+brew install hirokib/tap/ahem
+ahem setup        # installs ahem.app to /Applications, wires the hooks
+```
+
+The formula builds from source on your machine (needs the Command Line Tools),
+so there's no Gatekeeper friction and nothing to notarize.
+
+### From source
+
 ```sh
 git clone https://github.com/hirokib/ahem && cd ahem
-./install.sh                 # symlinks the CLI, wires the hooks, installs ahem.app
-open /Applications/ahem.app
+./install.sh      # build + setup in one step
 ```
 
 Then:

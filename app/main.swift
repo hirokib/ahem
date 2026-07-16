@@ -8,20 +8,11 @@
 import AppKit
 import UserNotifications
 
-// install.sh bakes the repo path into Resources/repo-path so the bundle works
-// from /Applications. Fallback: a dev build run straight from build/ahem.app,
-// where the repo is 5 hops up (MacOS, Contents, ahem.app, build, root).
+// Self-contained: build.sh bundles the scripts into Resources, repo layout
+// preserved, so the plugin's relative sibling lookups keep working.
 let contents = URL(fileURLWithPath: CommandLine.arguments[0]).resolvingSymlinksInPath()
     .deletingLastPathComponent().deletingLastPathComponent()
-let repo: URL = {
-    let marker = contents.appendingPathComponent("Resources/repo-path")
-    if let p = try? String(contentsOf: marker, encoding: .utf8) {
-        return URL(fileURLWithPath: p.trimmingCharacters(in: .whitespacesAndNewlines))
-    }
-    return contents.deletingLastPathComponent()
-        .deletingLastPathComponent().deletingLastPathComponent()
-}()
-let plugin = repo.appendingPathComponent("plugin/ahem.3s.sh").path
+let plugin = contents.appendingPathComponent("Resources/plugin/ahem.3s.sh").path
 
 struct Row {
     let text: String       // display text, dot included

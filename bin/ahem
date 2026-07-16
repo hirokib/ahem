@@ -1,10 +1,146 @@
 #!/bin/zsh
 # ahem          -- list running coding agents (process view)
 # ahem <pid>    -- focus that session's terminal window
+# ahem setup    -- install ahem.app to /Applications and wire the hooks
+# ahem unsetup  -- reverse setup
 #
 # Agent names are a hardcoded list. macOS has no registry of "agent
 # processes"; add names here as you install new tools.
 AGENTS=(claude codex aider goose cursor-agent)
+
+# This script runs from three places: the repo (bin/ahem), the installed app
+# (Resources/bin/ahem), or a Homebrew keg (libexec/bin/ahem). ROOT is the
+# parent either way, and the app bundle sits at a known spot for each.
+ROOT=${0:A:h:h}
+
+if [ "$1" = setup ]; then
+  if [[ ${ROOT:t} == Resources ]]; then APP=${ROOT:h:h}          # inside the app
+  elif [[ -d $ROOT/build/ahem.app ]]; then APP=$ROOT/build/ahem.app  # repo
+  elif [[ -d $ROOT/ahem.app ]]; then APP=$ROOT/ahem.app          # brew keg
+  else
+    echo "no ahem.app found near $ROOT -- run ./build.sh first" >&2; exit 1
+  fi
+  osascript -e 'tell application "ahem" to quit' 2>/dev/null || true
+  rm -rf /Applications/ahem.app
+  ditto "$APP" /Applications/ahem.app
+  echo "installed /Applications/ahem.app"
+
+  # Hooks point at the installed copy, so the repo/keg can move or vanish
+  # without breaking running sessions.
+  HOOK=/Applications/ahem.app/Contents/Resources/hook/status.py
+  python3 - "$HOME/.claude/settings.json" "$HOOK" <<'EOF'
+import json, pathlib, shutil, sys
+settings, hook = pathlib.Path(sys.argv[1]), sys.argv[2]
+cmd = f"python3 {hook}"
+EVENTS = ("SessionStart", "UserPromptSubmit", "Notification", "Stop", "SessionEnd")
+
+settings.parent.mkdir(parents=True, exist_ok=True)
+d = json.loads(settings.read_text()) if settings.exists() else {}
+if settings.exists() and not pathlib.Path(str(settings) + ".bak").exists():
+    shutil.copy(settings, str(settings) + ".bak")
+    print(f"backed up {settings}.bak")
+
+hooks = d.setdefault("hooks", {})
+for ev in EVENTS:
+    arr = hooks.setdefault(ev, [])
+    # drop our own prior entries (incl. old repo paths) then re-add
+    for m in list(arr):
+        m["hooks"] = [h for h in m.get("hooks", [])
+                      if "agent-status.py" not in h.get("command", "")
+                      and "hook/status.py" not in h.get("command", "")]
+        if not m["hooks"]:
+            arr.remove(m)
+    arr.append({"hooks": [{"type": "command", "command": cmd}]})
+
+settings.write_text(json.dumps(d, indent=2) + "\n")
+print("wired   " + ", ".join(EVENTS))
+EOF
+
+  if [ -d "$HOME/.codex" ]; then
+    python3 - "$HOME/.codex/hooks.json" /Applications/ahem.app/Contents/Resources <<'EOF'
+import json, pathlib, shutil, sys
+p, res = pathlib.Path(sys.argv[1]), sys.argv[2]
+ours = json.loads((pathlib.Path(res) / "codex-hooks.json").read_text().replace("REPO", res))
+
+d = {}
+if p.exists():
+    try:
+        d = json.loads(p.read_text())
+    except Exception:
+        d = {}
+    if not pathlib.Path(str(p) + ".bak").exists():
+        shutil.copy(p, str(p) + ".bak")
+        print(f"backed up {p}.bak")
+
+hooks = d.setdefault("hooks", {})
+for ev, entries in ours["hooks"].items():
+    arr = hooks.setdefault(ev, [])
+    for m in list(arr):  # drop our own prior entries, keep everyone else's
+        m["hooks"] = [h for h in m.get("hooks", []) if "hook/status.py" not in h.get("command", "")]
+        if not m["hooks"]:
+            arr.remove(m)
+    arr.extend(entries)
+p.write_text(json.dumps(d, indent=2) + "\n")
+print("wired   codex PermissionRequest, Stop -> ~/.codex/hooks.json")
+EOF
+    echo "        (codex asks you to trust these hooks on next start -- until then they are skipped)"
+  fi
+
+  open /Applications/ahem.app
+  echo "\nahem is in your menu bar. Allow notifications when asked; add it to"
+  echo "System Settings > Login Items to keep it across reboots."
+  exit 0
+fi
+
+if [ "$1" = unsetup ]; then
+  osascript -e 'tell application "ahem" to quit' 2>/dev/null || true
+  rm -rf /Applications/ahem.app
+  echo "removed /Applications/ahem.app"
+
+  python3 - "$HOME/.claude/settings.json" <<'EOF'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+if not p.exists():
+    sys.exit(0)
+d = json.loads(p.read_text())
+for ev, arr in list(d.get("hooks", {}).items()):
+    for m in list(arr):
+        m["hooks"] = [h for h in m.get("hooks", [])
+                      if "agent-status.py" not in h.get("command", "")
+                      and "hook/status.py" not in h.get("command", "")]
+        if not m["hooks"]:
+            arr.remove(m)
+p.write_text(json.dumps(d, indent=2) + "\n")
+print("unwired claude hooks")
+EOF
+
+  python3 - "$HOME/.codex/hooks.json" <<'EOF'
+import json, pathlib, sys
+p = pathlib.Path(sys.argv[1])
+if not p.exists():
+    sys.exit(0)
+try:
+    d = json.loads(p.read_text())
+except Exception:
+    sys.exit(0)
+for ev, arr in list(d.get("hooks", {}).items()):
+    for m in list(arr):
+        m["hooks"] = [h for h in m.get("hooks", []) if "hook/status.py" not in h.get("command", "")]
+        if not m["hooks"]:
+            arr.remove(m)
+    if not arr:
+        del d["hooks"][ev]
+if d.get("hooks"):
+    p.write_text(json.dumps(d, indent=2) + "\n")
+else:
+    p.unlink()  # it was ours alone
+print("unwired codex hooks")
+EOF
+
+  rm -rf "$HOME/.claude/agent-status"
+  echo "removed status files"
+  exit 0
+fi
 
 # Terminals: Ghostty, Terminal.app, iTerm2. Each is queried/focused by its own
 # AppleScript; match on tty, which is stable, not on any foreground-pid property
