@@ -1,0 +1,24 @@
+{
+  "hooks": {
+    "PermissionRequest": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 REPO/hook/status.py codex-blocked"
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 REPO/hook/status.py codex-clear"
+          }
+        ]
+      }
+    ]
+  }
+}

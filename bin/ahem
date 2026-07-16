@@ -1,0 +1,63 @@
+#!/bin/zsh
+# agents          -- list running coding agents (process view)
+# agents <pid>    -- focus that session's Ghostty window
+#
+# ponytail: agent names are a hardcoded list. macOS has no registry of "agent
+# processes"; add names here as you install new tools.
+AGENTS=(claude codex aider goose cursor-agent)
+
+# Ghostty ships an AppleScript dictionary exposing tty/pid per terminal surface,
+# plus `focus` (raises window + selects tab + focuses split in one call).
+# Match on tty, not Ghostty's `pid` property: that reports the *foreground*
+# process, which changes whenever an agent shells out. The tty is stable.
+
+if [ -n "$1" ]; then
+  if ! ps -p "$1" >/dev/null 2>&1; then
+    echo "no such pid: $1" >&2; exit 1
+  fi
+  tty=$(ps -o tty= -p "$1" | tr -d ' ')
+  if [ -z "$tty" ] || [ "$tty" = "??" ]; then
+    echo "pid $1 has no controlling terminal" >&2; exit 1
+  fi
+  osascript 2>/dev/null <<EOF || { echo "no live surface for pid $1 (window closed?)" >&2; exit 1 }
+tell application "Ghostty"
+  repeat with s in terminals
+    if tty of s is "/dev/$tty" then
+      focus s
+      activate
+      return
+    end if
+  end repeat
+  error "not found"
+end tell
+EOF
+  exit 0
+fi
+
+live=$(osascript 2>/dev/null <<'EOF'
+tell application "Ghostty"
+  set out to ""
+  repeat with s in terminals
+    set out to out & (tty of s) & linefeed
+  end repeat
+  return out
+end tell
+EOF
+)
+
+found=0
+for p in $(pgrep -x "${(j:|:)AGENTS}" 2>/dev/null); do
+  found=1
+  tty=$(ps -o tty= -p $p | tr -d ' ')
+  cwd=$(lsof -a -p $p -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
+  # args=, not comm=: macOS truncates comm to 16 chars, mangling long paths
+  name=$(basename "$(ps -o args= -p $p | awk '{print $1}')" 2>/dev/null)
+  case "$live" in
+    (*"/dev/$tty"*) mark="  " ;;
+    (*) mark="X " ;;
+  esac
+  printf "%s%-6s %-8s %-9s %s\n" "$mark" "$p" "$name" "$(ps -o etime= -p $p | tr -d ' ')" "$cwd"
+done
+
+[ $found -eq 0 ] && { echo "no agents running"; exit 0 }
+echo "\nX = no live window (orphan). 'agents <pid>' focuses a session."
