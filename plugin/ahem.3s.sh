@@ -263,6 +263,34 @@ TERMINALS = {
 }
 
 
+def pty_owners(ps_text=None):
+    """tty -> the app backing it, from one ps sweep. None if skipped (tests).
+
+    This, not the AppleScript title sweep, is the presence signal: AppleScript
+    cannot see windows on other Spaces, so `tty in titles` dimmed fifteen live
+    sessions as windowless. A window exists iff some app owns the pty: the
+    session leader (login/zsh, itself on the tty) has a parent that is not on
+    any tty -- Ghostty, Terminal, iTerm2, Code Helper, whatever. A leader
+    re-parented to launchd means the window really is gone.
+    """
+    if ps_text is None:
+        if os.environ.get("AGENTS_SKIP_PTY"):
+            return None
+        ps_text = sh("ps", "-eo", "pid=,ppid=,tty=,comm=")
+    procs = {}
+    for line in ps_text.splitlines():
+        parts = line.split(None, 3)
+        if len(parts) == 4:
+            procs[parts[0]] = parts[1:]  # ppid, tty, comm
+    owners = {}
+    for ppid, tty, comm in procs.values():
+        if tty.startswith("tty") and tty not in owners:
+            parent = procs.get(ppid)
+            if parent and parent[1] == "??" and not parent[2].endswith("launchd"):
+                owners[tty] = parent[2]
+    return owners
+
+
 def terminal_titles():
     """tty -> window title, across every running supported terminal.
 
@@ -375,13 +403,17 @@ def codex_rows():
 def load():
     rows = claude_rows() + codex_rows()
     titles = terminal_titles() if rows else {}  # one sweep for every session, not one each
+    owners = pty_owners() if rows else {}
     for d in rows:
+        tty = str(d.get("tty") or "")
         if d["agent"] == "claude":
-            d["name"] = clean_title(titles.get(str(d.get("tty") or "")), d.get("cwd"))
-        # No surface means the window was closed while the process lived on: there
-        # is nothing to focus. An empty map means no terminal answered or none is
-        # running -- do not then claim every session lost its window.
-        d["window"] = not titles or str(d.get("tty") or "") in titles
+            d["name"] = clean_title(titles.get(tty), d.get("cwd"))
+        # Presence comes from pty ownership; titles are for NAMING only (the
+        # AppleScript sweep is blind to other Spaces and non-scripted apps).
+        if owners is None:  # tests: fall back to the title map
+            d["window"] = not titles or tty in titles
+        else:
+            d["window"] = tty in owners
     # Unfocusable rows sort last: nothing can be done about them from here.
     rows.sort(key=lambda d: (not d["window"], ORDER.get(d.get("status"), 9), -d.get("ts", 0)))
     return rows

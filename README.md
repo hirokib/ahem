@@ -104,7 +104,8 @@ The Swift app deliberately contains no status logic — it renders whatever the 
 
 ## Limitations
 
-- Ghostty, Terminal.app, and iTerm2 only (background Terminal.app tabs can't expose their titles, so those rows are named by directory).
+- Precise focus (tab and split) works in Ghostty, Terminal.app, and iTerm2. Sessions in any other terminal (VS Code, kitty, …) are still tracked and focused at the app level — window presence comes from pty ownership, not from what AppleScript happens to see.
+- AppleScript can't enumerate windows on other macOS Spaces, so focusing a session parked in a fullscreen Space may only bring the terminal app forward (background Terminal.app tabs also can't expose their titles, so those rows are named by directory).
 - Codex under `--yolo` never shows 🔴 — it never asks for anything.
 - Closing a terminal window doesn't kill the agent; the process lingers with no window to focus. Those rows dim and mark `X` in the CLI.
 - macOS only.

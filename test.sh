@@ -5,6 +5,7 @@ REPO=${0:A:h}
 export AGENT_STATUS_DIR=$(mktemp -d)
 export AGENTS_SKIP_CODEX=1     # live codex sessions would make menu output nondeterministic
 export AGENTS_SKIP_TITLES=1    # ditto for whatever windows happen to be open
+export AGENTS_SKIP_PTY=1       # ditto for whatever ptys the ambient system has
 trap 'rm -rf "$AGENT_STATUS_DIR"' EXIT
 
 python3 - "$REPO" <<'EOF'
@@ -409,6 +410,41 @@ buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     plug.main()
 assert "no window" not in buf.getvalue(), "unknown must not render as gone"
+for f in D.glob("*.json"):
+    f.unlink()
+
+# --- presence comes from pty ownership, never the title sweep ---
+# REGRESSION GUARD: AppleScript window sweeps cannot see other Spaces or
+# unscripted apps (VS Code), so "tty not in titles" once dimmed fifteen LIVE
+# sessions as 'no window'. Titles may only ever name rows.
+
+# parsing: an app on ?? owning the leader = live; launchd = orphaned window;
+# a process whose parent is also on the tty must not count as an owner
+owners = plug.pty_owners("""\
+    1     0 ??      /sbin/launchd
+  500     1 ??      /Applications/Ghostty.app/Contents/MacOS/ghostty
+  501   500 ttys025 /usr/bin/login
+  502   501 ttys025 -zsh
+  600     1 ??      /Applications/Visual Studio Code.app/Contents/Frameworks/Code Helper.app/Contents/MacOS/Code Helper
+  601   600 ttys045 /bin/zsh
+  700     1 ttys027 /usr/bin/login
+""")
+assert "ghostty" in owners["ttys025"], owners
+assert "Code Helper" in owners["ttys045"], "unscripted apps still count as windows"
+assert "ttys027" not in owners, "leader orphaned to launchd = window gone"
+
+# integration: a session invisible to EVERY title sweep but whose pty is owned
+# is a live window (the other-Space case) -- and vice versa
+fixture("spaced", "working")   # fixture tty is ttys1
+plug.terminal_titles = lambda: {"ttys9": "✳ something else"}  # sweep can't see it
+plug.pty_owners = lambda: {"ttys1": "ghostty"}                # but the pty is owned
+rows = plug.load()
+assert rows[0]["window"] is True, "owned pty must be a window even when unseen by AppleScript"
+plug.terminal_titles = lambda: {"ttys1": "✳ stale title"}     # sweep sees it...
+plug.pty_owners = lambda: {}                                  # ...but nobody owns the pty
+rows = plug.load()
+assert rows[0]["window"] is False, "unowned pty is a gone window, title or not"
+plug.pty_owners = lambda: None  # back to the env-skip default for later sections
 for f in D.glob("*.json"):
     f.unlink()
 

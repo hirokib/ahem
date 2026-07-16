@@ -149,42 +149,19 @@ fi
 
 running() { pgrep -qix "$1" }
 
-live_ttys() {
-  running ghostty && osascript 2>/dev/null <<'EOF'
-tell application "Ghostty"
-  set out to ""
-  repeat with s in terminals
-    set out to out & (tty of s) & linefeed
-  end repeat
-  return out
-end tell
-EOF
-  running Terminal && osascript 2>/dev/null <<'EOF'
-tell application "Terminal"
-  set out to ""
-  repeat with w in windows
-    repeat with t in tabs of w
-      set out to out & (tty of t) & linefeed
-    end repeat
-  end repeat
-  return out
-end tell
-EOF
-  running iTerm2 && osascript 2>/dev/null <<'EOF'
-tell application "iTerm2"
-  set out to ""
-  repeat with w in windows
-    repeat with t in tabs of w
-      repeat with s in sessions of t
-        set out to out & (tty of s) & linefeed
-      end repeat
-    end repeat
-  end repeat
-  return out
-end tell
-EOF
-  return 0
+# The app backing a pty (empty if the window is truly gone): climb from the
+# session leader to the first ancestor not on a tty. launchd as that ancestor
+# means the leader was orphaned -- the window closed.
+owner_app() {  # $1 = /dev/ttysNNN
+  local pid app
+  pid=$(lsof -t "$1" 2>/dev/null | head -1)
+  while [ -n "$pid" ] && [ "$pid" != 1 ]; do
+    [ "$(ps -o tty= -p $pid 2>/dev/null | tr -d ' ')" = "??" ] && break
+    pid=$(ps -o ppid= -p $pid 2>/dev/null | tr -d ' ')
+  done
+  [ -n "$pid" ] && [ "$pid" != 1 ] && ps -o comm= -p $pid 2>/dev/null
 }
+
 
 focus_tty() {  # $1 = /dev/ttysNNN; succeeds on the first terminal that has it
   # Ghostty's `focus` raises the window, selects the tab, and focuses the split.
@@ -232,6 +209,14 @@ tell application "iTerm2"
   error "not found"
 end tell
 EOF
+  # Tier 2: no adapter could see the tty. AppleScript is blind to windows on
+  # other Spaces and to unscripted apps (VS Code's terminal), but the pty's
+  # owner is still knowable -- activate its bundle. Right app, maybe not the
+  # exact window; still better than a dead click.
+  local app=$(owner_app "$1")
+  case "$app" in
+    (*.app/*) open "${app%%.app/*}.app"; return 0 ;;
+  esac
   return 1
 }
 
@@ -247,8 +232,6 @@ if [ -n "$1" ]; then
   exit 0
 fi
 
-live=$(live_ttys)
-
 found=0
 for p in $(pgrep -x "${(j:|:)AGENTS}" 2>/dev/null); do
   found=1
@@ -256,10 +239,8 @@ for p in $(pgrep -x "${(j:|:)AGENTS}" 2>/dev/null); do
   cwd=$(lsof -a -p $p -d cwd -Fn 2>/dev/null | sed -n 's/^n//p')
   # args=, not comm=: macOS truncates comm to 16 chars, mangling long paths
   name=$(basename "$(ps -o args= -p $p | awk '{print $1}')" 2>/dev/null)
-  case "$live" in
-    (*"/dev/$tty"*) mark="  " ;;
-    (*) mark="X " ;;
-  esac
+  # pty ownership, not an AppleScript sweep: window lists miss other Spaces
+  if [ -n "$(owner_app "/dev/$tty")" ]; then mark="  "; else mark="X "; fi
   printf "%s%-6s %-8s %-9s %s\n" "$mark" "$p" "$name" "$(ps -o etime= -p $p | tr -d ' ')" "$cwd"
 done
 
