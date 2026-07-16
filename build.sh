@@ -20,7 +20,7 @@ cp "$REPO/app/Info.plist" "$APP/Contents/"
 # preserved so the scripts' relative sibling lookups keep working.
 cp -R "$REPO/bin" "$REPO/plugin" "$REPO/hook" "$RES/"
 cp "$REPO/codex-hooks.json" "$RES/"
-rm -rf "$RES"/*/__pycache__
+rm -rf "$RES"/*/__pycache__(N)  # (N): no error when absent, e.g. a fresh clone
 chmod +x "$RES/bin/ahem" "$RES/plugin/ahem.3s.sh" "$RES/hook/status.py"
 
 codesign --sign - --force "$APP" 2>&1 | grep -v 'replacing existing signature' || true
