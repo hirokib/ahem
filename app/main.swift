@@ -110,10 +110,12 @@ class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
         }
         menu.addItem(.separator())
         if bannersOff {
-            let warn = NSMenuItem(title: "🔕 Banners off — allow ahem in System Settings › Notifications",
-                                  action: nil, keyEquivalent: "")
-            warn.isEnabled = false
-            menu.addItem(warn)
+            // Actionable, not just a warning: once permission is denied the OS
+            // won't re-prompt, so the only fix is the Settings pane -- open it.
+            let fix = NSMenuItem(title: "🔕 Turn on banners…",
+                                 action: #selector(openNotificationSettings), keyEquivalent: "")
+            fix.target = self
+            menu.addItem(fix)
         }
         menu.addItem(NSMenuItem(title: "Quit ahem",
                                 action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
@@ -123,6 +125,14 @@ class App: NSObject, NSApplicationDelegate, UNUserNotificationCenterDelegate {
 
     @objc func focusRow(_ sender: NSMenuItem) {
         if let argv = sender.representedObject as? [String] { exec(argv) }
+    }
+
+    @objc func openNotificationSettings() {
+        // Deep-links straight to Settings › Notifications; the user still picks
+        // ahem from the list (macOS exposes no per-app anchor).
+        if let url = URL(string: "x-apple.systempreferences:com.apple.Notifications-Settings.extension") {
+            NSWorkspace.shared.open(url)
+        }
     }
 
     func notifyNew(_ rows: [Row]) {

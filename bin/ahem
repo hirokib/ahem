@@ -164,13 +164,17 @@ owner_app() {  # $1 = /dev/ttysNNN
 
 
 focus_tty() {  # $1 = /dev/ttysNNN; succeeds on the first terminal that has it
-  # Ghostty's `focus` raises the window, selects the tab, and focuses the split.
+  # No AppleScript `activate`: activating an app whose target window is on
+  # another Space switches Spaces but leaves the window non-key, so keystrokes
+  # go nowhere until you click it -- a macOS bug that once wedged input
+  # entirely. Each terminal's own focus/select verb raises the surface within
+  # the current Space; bringing the app frontmost across Spaces is left to the
+  # user (or the tier-2 `open` below), which does it without the key-window bug.
   running ghostty && osascript 2>/dev/null <<EOF && return 0
 tell application "Ghostty"
   repeat with s in terminals
     if tty of s is "$1" then
       focus s
-      activate
       return
     end if
   end repeat
@@ -184,7 +188,6 @@ tell application "Terminal"
       if tty of t is "$1" then
         set selected of t to true
         set index of w to 1
-        activate
         return
       end if
     end repeat
@@ -200,7 +203,6 @@ tell application "iTerm2"
         if tty of s is "$1" then
           select s
           select t
-          activate
           return
         end if
       end repeat
