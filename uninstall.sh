@@ -3,10 +3,9 @@
 set -e
 REPO=${0:A:h}
 
-rm -f "$HOME/bin/ahem" "$HOME/.swiftbar/ahem.3s.sh"
-rm -f "$HOME/bin/nag" "$HOME/.swiftbar/nag.3s.sh"
-rm -f "$HOME/bin/agents" "$HOME/.swiftbar/agents.3s.sh"  # pre-rename names
-echo "unlinked CLI + plugin"
+rm -f "$HOME/bin/ahem" "$HOME/bin/nag" "$HOME/bin/agents"
+rm -f "$HOME/.swiftbar/ahem.3s.sh"  # from installs that predate ahem.app
+echo "unlinked CLI"
 
 python3 - "$HOME/.claude/settings.json" <<'EOF'
 import json, pathlib, sys
@@ -47,6 +46,10 @@ else:
     p.unlink()  # it was ours alone
 print("unwired codex hooks")
 EOF
+
+osascript -e 'tell application "ahem" to quit' 2>/dev/null || true
+rm -rf "$REPO/build" /Applications/ahem.app
+echo "removed ahem.app"
 
 rm -rf "$HOME/.claude/agent-status"
 echo "removed status files"

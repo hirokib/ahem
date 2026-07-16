@@ -2,8 +2,8 @@
 # <xbar.title>ahem</xbar.title>
 # <xbar.version>v1.1</xbar.version>
 # <xbar.author>hiroki</xbar.author>
-# <xbar.desc>Which agent session needs you. Click a row to focus its Ghostty window.</xbar.desc>
-# <xbar.dependencies>python3,ghostty</xbar.dependencies>
+# <xbar.desc>Which agent session needs you. Click a row to focus its window.</xbar.desc>
+# <xbar.dependencies>python3</xbar.dependencies>
 """SwiftBar/xbar plugin. Also runs standalone: `watch -n2 plugin/ahem.3s.sh`.
 
 Claude sessions report themselves via hooks (see hook/status.py). Codex is found
@@ -221,28 +221,65 @@ def blocked_on(pid, rollout):
 
 # --- naming: what is this session actually doing? ---
 
-def ghostty_titles():
-    """tty -> terminal title. Claude keeps its title set to the current task and
-    updates it as the task changes, which is exactly the name we want and better
-    than anything derivable from the transcript. Codex only puts the cwd there.
-    """
-    # Separator is a space, not `tab`: Ghostty's dictionary defines a `tab` class,
-    # which shadows AppleScript's tab constant inside the tell block and emits the
-    # literal word. A tty never contains a space, so the first one splits cleanly.
-    if os.environ.get("AGENTS_SKIP_GHOSTTY"):
-        return {}
-    out = sh("osascript", "-e", '''tell application "Ghostty"
+# Process name -> AppleScript emitting "tty title" lines, one per surface.
+# Separator is a space, not `tab`: Ghostty's dictionary defines a `tab` class,
+# which shadows AppleScript's tab constant inside the tell block and emits the
+# literal word. A tty never contains a space, so the first one splits cleanly.
+TERMINALS = {
+    "ghostty": '''tell application "Ghostty"
       set out to ""
       repeat with s in terminals
         set out to out & (tty of s) & " " & (name of s) & linefeed
       end repeat
       return out
-    end tell''')
+    end tell''',
+    # A background tab's title is unknowable (only the window carries a name,
+    # and it shows the selected tab's), so those rows get tty only and fall
+    # back to their cwd basename.
+    "Terminal": '''tell application "Terminal"
+      set out to ""
+      repeat with w in windows
+        repeat with t in tabs of w
+          if selected of t then
+            set out to out & (tty of t) & " " & (name of w) & linefeed
+          else
+            set out to out & (tty of t) & linefeed
+          end if
+        end repeat
+      end repeat
+      return out
+    end tell''',
+    "iTerm2": '''tell application "iTerm2"
+      set out to ""
+      repeat with w in windows
+        repeat with t in tabs of w
+          repeat with s in sessions of t
+            set out to out & (tty of s) & " " & (name of s) & linefeed
+          end repeat
+        end repeat
+      end repeat
+      return out
+    end tell''',
+}
+
+
+def terminal_titles():
+    """tty -> window title, across every running supported terminal.
+
+    Claude keeps its title set to the current task, which is exactly the name we
+    want and better than anything derivable from the transcript. Codex only puts
+    the cwd there. Apps are pgrep-gated: osascript LAUNCHES an app it tells.
+    """
+    if os.environ.get("AGENTS_SKIP_TITLES"):
+        return {}
     titles = {}
-    for line in out.splitlines():
-        tty, _, name = line.partition(" ")
-        if tty.startswith("/dev/"):
-            titles[tty.replace("/dev/", "")] = name.strip()
+    for proc, script in TERMINALS.items():
+        if subprocess.run(["pgrep", "-qix", proc], capture_output=True).returncode:
+            continue
+        for line in sh("osascript", "-e", script).splitlines():
+            tty, _, name = line.partition(" ")
+            if tty.startswith("/dev/"):
+                titles[tty.replace("/dev/", "")] = name.strip()
     return titles
 
 
@@ -337,13 +374,13 @@ def codex_rows():
 
 def load():
     rows = claude_rows() + codex_rows()
-    titles = ghostty_titles() if rows else {}  # one call for every session, not one each
+    titles = terminal_titles() if rows else {}  # one sweep for every session, not one each
     for d in rows:
         if d["agent"] == "claude":
             d["name"] = clean_title(titles.get(str(d.get("tty") or "")), d.get("cwd"))
         # No surface means the window was closed while the process lived on: there
-        # is nothing to focus. An empty map means Ghostty is gone or the query
-        # failed -- do not then claim every session lost its window.
+        # is nothing to focus. An empty map means no terminal answered or none is
+        # running -- do not then claim every session lost its window.
         d["window"] = not titles or str(d.get("tty") or "") in titles
     # Unfocusable rows sort last: nothing can be done about them from here.
     rows.sort(key=lambda d: (not d["window"], ORDER.get(d.get("status"), 9), -d.get("ts", 0)))

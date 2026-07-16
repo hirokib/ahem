@@ -4,7 +4,7 @@ set -e
 REPO=${0:A:h}
 export AGENT_STATUS_DIR=$(mktemp -d)
 export AGENTS_SKIP_CODEX=1     # live codex sessions would make menu output nondeterministic
-export AGENTS_SKIP_GHOSTTY=1   # ditto for whatever windows happen to be open
+export AGENTS_SKIP_TITLES=1    # ditto for whatever windows happen to be open
 trap 'rm -rf "$AGENT_STATUS_DIR"' EXIT
 
 python3 - "$REPO" <<'EOF'
@@ -377,7 +377,7 @@ assert plug.codex_name(r) is None, "no prompt in the tail -> no name"
 plug.DIR = D
 for f in D.glob("*.json"):
     f.unlink()
-plug.ghostty_titles = lambda: {"ttys9": "✳ A real task"}
+plug.terminal_titles = lambda: {"ttys9": "✳ A real task"}
 fixture("gone", "working", ts=time.time())          # fixture tty is ttys1: no surface
 rows = plug.load()
 assert rows[0]["window"] is False, rows
@@ -391,7 +391,7 @@ assert rows[0]["name"] == "A real task", "title still resolves for live surfaces
 
 # the rendered row must not offer an action it cannot perform
 import contextlib, io
-plug.ghostty_titles = lambda: {"ttys9": "✳ A real task"}
+plug.terminal_titles = lambda: {"ttys9": "✳ A real task"}
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
     plug.main()
@@ -403,7 +403,7 @@ assert "color=" in gone, "and visibly dimmed"
 assert "bash=" in here and "no window" not in here, here
 
 # a failed ghostty query must not declare every session windowless
-plug.ghostty_titles = lambda: {}
+plug.terminal_titles = lambda: {}
 assert all(d["window"] for d in plug.load()), "empty title map means unknown, not gone"
 buf = io.StringIO()
 with contextlib.redirect_stdout(buf):
@@ -413,7 +413,7 @@ for f in D.glob("*.json"):
     f.unlink()
 
 # an idle session is still about something: name it, and still say it is idle
-plug.ghostty_titles = lambda: {"ttys9": "✳ Draft release notes"}
+plug.terminal_titles = lambda: {"ttys9": "✳ Draft release notes"}
 for f in D.glob("*.json"):
     f.unlink()
 (D / "resting.json").write_text(json.dumps({"status": "idle", "pid": os.getpid(),

@@ -3,18 +3,15 @@
 set -e
 REPO=${0:A:h}
 BIN=$HOME/bin
-PLUGINS=$HOME/.swiftbar
 SETTINGS=$HOME/.claude/settings.json
 
 chmod +x "$REPO"/bin/ahem "$REPO"/hook/status.py "$REPO"/plugin/ahem.3s.sh "$REPO"/uninstall.sh "$REPO"/test.sh
 
-mkdir -p "$BIN" "$PLUGINS"
-# a rename leaves the old names behind; SwiftBar would show two menu bar items
-rm -f "$BIN/agents" "$PLUGINS/agents.3s.sh" "$BIN/nag" "$PLUGINS/nag.3s.sh"
+mkdir -p "$BIN"
+rm -f "$BIN/agents" "$BIN/nag"  # pre-rename names
 ln -sf "$REPO/bin/ahem" "$BIN/ahem"
-ln -sf "$REPO/plugin/ahem.3s.sh" "$PLUGINS/ahem.3s.sh"
 echo "linked  $BIN/ahem"
-echo "linked  $PLUGINS/ahem.3s.sh"
+
 
 python3 - "$SETTINGS" "$REPO" <<'EOF'
 import json, pathlib, shutil, sys
@@ -81,13 +78,23 @@ EOF
   echo "        (codex will ask you to trust these hooks on next start -- until then they are skipped)"
 fi
 
-echo
-if [ -d /Applications/SwiftBar.app ]; then
-  echo "SwiftBar found. Set its plugin folder to: $PLUGINS"
+# The menu bar app. A bundle, not a script, because UNUserNotificationCenter
+# (native clickable banners) refuses to run outside one.
+if command -v swiftc >/dev/null; then
+  APP=$REPO/build/ahem.app
+  mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
+  swiftc -O "$REPO/app/main.swift" -o "$APP/Contents/MacOS/ahem"
+  cp "$REPO/app/Info.plist" "$APP/Contents/"
+  echo "$REPO" > "$APP/Contents/Resources/repo-path"
+  codesign --sign - --force "$APP" 2>&1 | grep -v 'replacing existing signature' || true
+  osascript -e 'tell application "ahem" to quit' 2>/dev/null || true
+  rm -rf /Applications/ahem.app
+  ditto "$APP" /Applications/ahem.app
+  echo "installed /Applications/ahem.app"
+  echo "        open it now with: open /Applications/ahem.app"
+  echo "        add it to System Settings > Login Items to keep it around"
 else
-  echo "SwiftBar not installed (optional). For the menu bar:"
-  echo "    brew install --cask swiftbar    # then point it at $PLUGINS"
-  echo "Without it, the same view runs standalone:"
-  echo "    watch -n2 $REPO/plugin/ahem.3s.sh"
+  echo "swiftc not found (xcode-select --install) -- skipped building ahem.app."
+  echo "'watch -n2 $REPO/plugin/ahem.3s.sh' works as the view instead."
 fi
 echo "\nDone. New sessions register automatically; existing ones on their next event."

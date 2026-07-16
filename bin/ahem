@@ -1,15 +1,103 @@
 #!/bin/zsh
-# agents          -- list running coding agents (process view)
-# agents <pid>    -- focus that session's Ghostty window
+# ahem          -- list running coding agents (process view)
+# ahem <pid>    -- focus that session's terminal window
 #
-# ponytail: agent names are a hardcoded list. macOS has no registry of "agent
+# Agent names are a hardcoded list. macOS has no registry of "agent
 # processes"; add names here as you install new tools.
 AGENTS=(claude codex aider goose cursor-agent)
 
-# Ghostty ships an AppleScript dictionary exposing tty/pid per terminal surface,
-# plus `focus` (raises window + selects tab + focuses split in one call).
-# Match on tty, not Ghostty's `pid` property: that reports the *foreground*
-# process, which changes whenever an agent shells out. The tty is stable.
+# Terminals: Ghostty, Terminal.app, iTerm2. Each is queried/focused by its own
+# AppleScript; match on tty, which is stable, not on any foreground-pid property
+# (that changes whenever an agent shells out). Apps are pgrep-gated because
+# osascript LAUNCHES an app it tells.
+
+running() { pgrep -qix "$1" }
+
+live_ttys() {
+  running ghostty && osascript 2>/dev/null <<'EOF'
+tell application "Ghostty"
+  set out to ""
+  repeat with s in terminals
+    set out to out & (tty of s) & linefeed
+  end repeat
+  return out
+end tell
+EOF
+  running Terminal && osascript 2>/dev/null <<'EOF'
+tell application "Terminal"
+  set out to ""
+  repeat with w in windows
+    repeat with t in tabs of w
+      set out to out & (tty of t) & linefeed
+    end repeat
+  end repeat
+  return out
+end tell
+EOF
+  running iTerm2 && osascript 2>/dev/null <<'EOF'
+tell application "iTerm2"
+  set out to ""
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        set out to out & (tty of s) & linefeed
+      end repeat
+    end repeat
+  end repeat
+  return out
+end tell
+EOF
+  return 0
+}
+
+focus_tty() {  # $1 = /dev/ttysNNN; succeeds on the first terminal that has it
+  # Ghostty's `focus` raises the window, selects the tab, and focuses the split.
+  running ghostty && osascript 2>/dev/null <<EOF && return 0
+tell application "Ghostty"
+  repeat with s in terminals
+    if tty of s is "$1" then
+      focus s
+      activate
+      return
+    end if
+  end repeat
+  error "not found"
+end tell
+EOF
+  running Terminal && osascript 2>/dev/null <<EOF && return 0
+tell application "Terminal"
+  repeat with w in windows
+    repeat with t in tabs of w
+      if tty of t is "$1" then
+        set selected of t to true
+        set index of w to 1
+        activate
+        return
+      end if
+    end repeat
+  end repeat
+  error "not found"
+end tell
+EOF
+  running iTerm2 && osascript 2>/dev/null <<EOF && return 0
+tell application "iTerm2"
+  repeat with w in windows
+    repeat with t in tabs of w
+      repeat with s in sessions of t
+        if tty of s is "$1" then
+          select s
+          select t
+          activate
+          return
+        end if
+      end repeat
+    end repeat
+  end repeat
+  error "not found"
+end tell
+EOF
+  return 1
+}
 
 if [ -n "$1" ]; then
   if ! ps -p "$1" >/dev/null 2>&1; then
@@ -19,31 +107,11 @@ if [ -n "$1" ]; then
   if [ -z "$tty" ] || [ "$tty" = "??" ]; then
     echo "pid $1 has no controlling terminal" >&2; exit 1
   fi
-  osascript 2>/dev/null <<EOF || { echo "no live surface for pid $1 (window closed?)" >&2; exit 1 }
-tell application "Ghostty"
-  repeat with s in terminals
-    if tty of s is "/dev/$tty" then
-      focus s
-      activate
-      return
-    end if
-  end repeat
-  error "not found"
-end tell
-EOF
+  focus_tty "/dev/$tty" || { echo "no live surface for pid $1 (window closed?)" >&2; exit 1 }
   exit 0
 fi
 
-live=$(osascript 2>/dev/null <<'EOF'
-tell application "Ghostty"
-  set out to ""
-  repeat with s in terminals
-    set out to out & (tty of s) & linefeed
-  end repeat
-  return out
-end tell
-EOF
-)
+live=$(live_ttys)
 
 found=0
 for p in $(pgrep -x "${(j:|:)AGENTS}" 2>/dev/null); do
